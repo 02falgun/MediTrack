@@ -1,0 +1,33 @@
+{
+  "extension_name": "Temporal Drift & Population Stability Monitoring",
+  "monitoring_comparison": "Baseline Batch 1 (Q1) vs Production Batch 4 (Q4)",
+  "feature_drift_metrics": {
+    "time_in_hospital": {
+      "psi": 0.005,
+      "ks_statistic": 0.0134,
+      "ks_p_value": 0.7604721265530159,
+      "drift_status": "STABLE"
+    },
+    "num_medications": {
+      "psi": 0.0038,
+      "ks_statistic": 0.012,
+      "ks_p_value": 0.8643325152980597,
+      "drift_status": "STABLE"
+    },
+    "number_inpatient": {
+      "psi": 0.0016,
+      "ks_statistic": 0.0134,
+      "ks_p_value": 0.7604721265530159,
+      "drift_status": "STABLE"
+    },
+    "num_lab_procedures": {
+      "psi": 0.0039,
+      "ks_statistic": 0.0178,
+      "ks_p_value": 0.40671816589876386,
+      "drift_status": "STABLE"
+    }
+  },
+  "prediction_score_psi": 0.0032,
+  "overall_stability": "HEALTHY (All feature PSI < 0.10; no immediate model retraining required)",
+  "summary": "Distribution across clinical features remained stable over time with PSI < 0.05 for length of stay and medication volume."
+}

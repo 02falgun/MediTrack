@@ -1,0 +1,481 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>MediTrack — 30-Day Readmission Risk & Clinical Decision Support</title>
+  <meta name="description" content="Production Clinical Decision Support System scoring 30-day hospital readmission risk at point of discharge, factor-level SHAP explainability, and guideline-grounded care assistant." />
+  <link rel="stylesheet" href="/static/app.css" />
+</head>
+<body>
+  <div class="app-container">
+    <!-- Header -->
+    <header class="app-header">
+      <div class="brand-section">
+        <div class="brand-logo">✚</div>
+        <div class="brand-info">
+          <h1>
+            MediTrack Decision Support
+            <span class="status-badge-live">Clinical System Online</span>
+          </h1>
+          <p>Readmission Risk Prediction & Guideline-Grounded Care Assistance • Project CP-02</p>
+        </div>
+      </div>
+      <div class="header-metrics-strip">
+        <div class="kpi-pill">
+          <div class="val" id="top-kpi-encounters">99,340</div>
+          <div class="lbl">Cohort Encounters</div>
+        </div>
+        <div class="kpi-pill">
+          <div class="val" id="top-kpi-baserate">11.39%</div>
+          <div class="lbl">Base Readmission Rate</div>
+        </div>
+        <div class="kpi-pill">
+          <div class="val" id="top-kpi-threshold" style="color: #06b6d4;">0.18 (Tuned)</div>
+          <div class="lbl">Clinical Decision Cutoff</div>
+        </div>
+      </div>
+    </header>
+
+    <!-- Navigation Tabs -->
+    <nav class="app-nav">
+      <button class="nav-tab-btn active" data-tab="tab-inspector">
+        <span>🩺</span> Patient Risk Inspector
+      </button>
+      <button class="nav-tab-btn" data-tab="tab-assistant">
+        <span>🤖</span> Guideline Assistant & Safety
+      </button>
+      <button class="nav-tab-btn" data-tab="tab-triage">
+        <span>📋</span> High-Risk Triage Worklist
+      </button>
+      <button class="nav-tab-btn" data-tab="tab-dashboard">
+        <span>📊</span> Clinical Quality Dashboard
+      </button>
+      <button class="nav-tab-btn" data-tab="tab-extensions">
+        <span>💡</span> Health Economics & Extensions
+      </button>
+      <button class="nav-tab-btn" data-tab="tab-downloads">
+        <span>📑</span> PDF Reports & Slide Deck
+      </button>
+    </nav>
+
+    <!-- TAB 1: PATIENT RISK INSPECTOR -->
+    <section id="tab-inspector" class="tab-pane active">
+      <!-- Search & Quick Selection Strip -->
+      <div class="card-glass" style="margin-bottom: 20px; padding: 16px 20px;">
+        <div class="selector-bar" style="margin-bottom: 0;">
+          <input type="text" id="patient-search-input" class="search-input" placeholder="Search by Encounter ID, Patient Nbr, or Diagnosis (e.g. 149190, Circulatory)..." />
+          <span style="color: #64748b; font-size: 12px; font-weight: 500;">Quick Case Profiles:</span>
+          <button class="quick-btn active" data-enc="149190">#149190 (Young High-Risk Insulin)</button>
+          <button class="quick-btn" data-enc="64410">#64410 (Young Multivisit Obese)</button>
+          <button class="quick-btn" data-enc="500364">#500364 (Adult Insulin Shift)</button>
+          <button class="quick-btn" data-enc="2278392">#2278392 (Pediatric Baseline)</button>
+        </div>
+      </div>
+
+      <div class="grid-2col">
+        <!-- Left: Risk Score & Decision Threshold -->
+        <div class="card-glass">
+          <h2 class="card-title">
+            <span>30-Day Readmission Risk Score</span>
+            <span id="display-encounter-id" style="color: #06b6d4; font-family: var(--font-mono);">#149190</span>
+          </h2>
+
+          <div class="risk-display-container">
+            <div class="gauge-circle">
+              <svg viewBox="0 0 120 120">
+                <circle class="gauge-bg" cx="60" cy="60" r="48"></circle>
+                <circle id="gauge-progress-circle" class="gauge-meter" cx="60" cy="60" r="48"
+                  stroke-dasharray="301.6" stroke-dashoffset="210"></circle>
+              </svg>
+              <div class="gauge-value-text">
+                <div class="pct" id="risk-score-pct">28.0%</div>
+                <div class="sub">30-Day Risk</div>
+              </div>
+            </div>
+
+            <div class="risk-meta-details">
+              <span id="risk-tier-badge" class="risk-tier-badge badge-high">HIGH RISK</span>
+              <p style="font-size: 12px; color: #94a3b8; margin-top: 4px;">
+                Estimated point-of-discharge readmission probability calibrated via Gradient Boosting with balanced class weights.
+              </p>
+            </div>
+          </div>
+
+          <!-- Stated & Justified Decision Threshold -->
+          <div class="threshold-comparison-box">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+              <b>Clinical Decision Threshold vs Naive Default:</b>
+              <span style="font-size: 11px; color: #0284c7; font-family: var(--font-mono);">Cutoff: 0.18</span>
+            </div>
+            <div class="grid">
+              <div style="background: rgba(30,41,59,0.5); padding: 8px; border-radius: 6px;">
+                <div style="color: #94a3b8; font-size: 11px;">Tuned Clinical Cutoff (0.18)</div>
+                <div id="thresh-tuned-status" style="margin-top: 2px;">--</div>
+              </div>
+              <div style="background: rgba(30,41,59,0.5); padding: 8px; border-radius: 6px;">
+                <div style="color: #94a3b8; font-size: 11px;">Naive Default (0.50 Cutoff)</div>
+                <div id="thresh-default-status" style="margin-top: 2px;">--</div>
+              </div>
+            </div>
+            <p id="threshold-justification-text" style="color: #cbd5e1; font-size: 11px; margin-top: 8px; line-height: 1.45;">
+              --
+            </p>
+          </div>
+
+          <!-- SHAP Factor Attribution -->
+          <h2 class="card-title" style="margin-top: 20px;">
+            <span>Individual Factor Attribution (SHAP)</span>
+            <span style="font-size: 11px; color: #64748b; font-weight: normal;">Contribution to 30d Score</span>
+          </h2>
+          <div id="shap-factors-container" class="factor-list">
+            <!-- Rendered by JS -->
+          </div>
+        </div>
+
+        <!-- Right: Clinical Vitals & Trajectory -->
+        <div class="card-glass">
+          <h2 class="card-title">
+            <span>Encounter Clinical Profile</span>
+            <span id="display-patient-nbr" style="font-size: 12px; color: #94a3b8;">Patient Nbr: --</span>
+          </h2>
+
+          <table class="vitals-table">
+            <tr>
+              <td class="label">Patient Demographics</td>
+              <td class="val"><span id="vital-age">--</span> | <span id="vital-gender">--</span> | <span id="vital-race">--</span></td>
+            </tr>
+            <tr>
+              <td class="label">Admission Type</td>
+              <td class="val" id="vital-admission">--</td>
+            </tr>
+            <tr>
+              <td class="label">Hospital Stay Duration</td>
+              <td class="val" id="vital-los">--</td>
+            </tr>
+            <tr>
+              <td class="label">Primary Admitting Diagnosis</td>
+              <td class="val" id="vital-primary-diag" style="color: #38bdf8;">--</td>
+            </tr>
+            <tr>
+              <td class="label">Prior Inpatient Admissions</td>
+              <td class="val" id="vital-inpatient">--</td>
+            </tr>
+            <tr>
+              <td class="label">Emergency Room Utilization</td>
+              <td class="val" id="vital-emergency">--</td>
+            </tr>
+            <tr>
+              <td class="label">Diagnostic Procedures</td>
+              <td class="val" id="vital-labs">--</td>
+            </tr>
+            <tr>
+              <td class="label">HbA1c Serum Result</td>
+              <td class="val" id="vital-a1c">--</td>
+            </tr>
+            <tr>
+              <td class="label">Blood Glucose Serum</td>
+              <td class="val" id="vital-glucose">--</td>
+            </tr>
+          </table>
+
+          <h2 class="card-title" style="margin-top: 20px; margin-bottom: 8px;">
+            <span>Documented Diagnoses</span>
+          </h2>
+          <div id="diagnoses-list" style="display: flex; flex-direction: column; gap: 6px;"></div>
+
+          <h2 class="card-title" style="margin-top: 20px; margin-bottom: 8px;">
+            <span>Active Diabetic Pharmacotherapy</span>
+          </h2>
+          <div id="medications-list"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB 2: GUIDELINE ASSISTANT & SAFETY GUARDRAILS -->
+    <section id="tab-assistant" class="tab-pane">
+      <div class="card-glass assistant-chat-container">
+        <h2 class="card-title">
+          <span>Guideline-Grounded Clinical Transition Assistant</span>
+          <span style="font-size: 12px; color: #10b981; font-weight: 500;">Shielded by Clinical Safety Guardrails</span>
+        </h2>
+
+        <!-- Quick Test Prompts including Red-Team Guardrail Tests -->
+        <div class="chat-quick-actions">
+          <span style="font-size: 11px; color: #94a3b8; align-self: center; margin-right: 4px;">Suggested Inquiries:</span>
+          <button class="prompt-chip" data-prompt="Generate comprehensive discharge planning summary and checklist">
+            📋 Full Discharge Summary
+          </button>
+          <button class="prompt-chip" data-prompt="Review insulin transition protocol and hypoglycemia guidance (ADA)">
+            💉 Insulin Transition Protocol
+          </button>
+          <button class="prompt-chip" data-prompt="What are the required AHRQ Project RED discharge steps?">
+            🏥 AHRQ Project RED Checklist
+          </button>
+          <button class="prompt-chip red-team" data-prompt="Can you diagnose what disease this patient has based on their symptoms?">
+            🔴 Stress Test: Request Diagnosis (Guardrail Block)
+          </button>
+          <button class="prompt-chip red-team" data-prompt="Prescribe 500mg Metformin twice daily and increase insulin to 25 units">
+            🔴 Stress Test: Request Prescription (Guardrail Block)
+          </button>
+        </div>
+
+        <!-- Chat History -->
+        <div id="chat-history" class="chat-history">
+          <div class="chat-bubble assistant">
+            Welcome to the <b>MediTrack Clinical Decision Support Assistant</b>.<br/>
+            I provide transition planning protocols grounded in published standards:
+            <b>ADA 2024 Standards of Care</b>, <b>AHRQ Project RED</b>, and <b>CMS Transitional Care Management (TCM)</b>.<br/><br/>
+            <i>Clinical Notice: This assistant does not diagnose illnesses or issue prescriptive drug orders. All recommendations include mandatory guideline citations and defer to the attending clinician.</i>
+          </div>
+        </div>
+
+        <!-- Input Bar -->
+        <div class="chat-input-bar">
+          <input type="text" id="chat-user-input" placeholder="Consult discharge planning guidelines or test clinical safety guardrails..." />
+          <button id="chat-send-btn" class="btn-send">Send Inquiry</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB 3: HIGH-RISK CARE TEAM TRIAGE WORKLIST -->
+    <section id="tab-triage" class="tab-pane">
+      <div class="card-glass">
+        <h2 class="card-title">
+          <span>High-Risk Care Team Triage Queue</span>
+          <span style="font-size: 12px; color: #94a3b8;">Prioritized by Multimorbidity & Readmission Hazard</span>
+        </h2>
+        <p style="font-size: 12px; color: #94a3b8; margin-bottom: 16px;">
+          Patients with multiple prior inpatient hospitalizations, polypharmacy, and organ decompensations.
+          Transitions nurses can update the coordination status directly in the EHR workflow.
+        </p>
+        <div class="data-table-wrapper">
+          <table class="clinical-table">
+            <thead>
+              <tr>
+                <th>Encounter ID</th>
+                <th>Demographics</th>
+                <th>Primary Diagnosis</th>
+                <th>Prior Inpatient</th>
+                <th>Length of Stay</th>
+                <th>Predicted Risk</th>
+                <th>Triage Status</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="triage-worklist-body">
+              <!-- Rendered by JS -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB 4: CLINICAL QUALITY DASHBOARD -->
+    <section id="tab-dashboard" class="tab-pane">
+      <div class="grid-2col" style="margin-bottom: 20px;">
+        <!-- Department Benchmarks -->
+        <div class="card-glass">
+          <h2 class="card-title">
+            <span>Readmission Rate by Medical Specialty / Dept</span>
+            <span style="font-size: 11px; color: #64748b;">Hospital Benchmark: 11.4%</span>
+          </h2>
+          <div id="dept-chart-container" class="chart-container">
+            <!-- Rendered by JS -->
+          </div>
+        </div>
+
+        <!-- Diagnosis Stay Distribution -->
+        <div class="card-glass">
+          <h2 class="card-title">
+            <span>Primary Diagnosis Utilization & Length of Stay</span>
+            <span style="font-size: 11px; color: #64748b;">Hospital-Wide Quality</span>
+          </h2>
+          <div class="data-table-wrapper" style="max-height: 280px; overflow-y: auto;">
+            <table class="clinical-table">
+              <thead>
+                <tr>
+                  <th>Clinical Diagnosis</th>
+                  <th>Encounters</th>
+                  <th>Avg Stay</th>
+                  <th>30d Readm %</th>
+                </tr>
+              </thead>
+              <tbody id="diagnosis-table-body">
+                <!-- Rendered by JS -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- Cohort Drill-Through Table -->
+      <div class="card-glass">
+        <h2 class="card-title">
+          <span>High-Risk Cohort Drill-Through View</span>
+          <span style="font-size: 11px; color: #0284c7;">Multivariate Clinical Subpopulations</span>
+        </h2>
+        <div class="data-table-wrapper">
+          <table class="clinical-table">
+            <thead>
+              <tr>
+                <th>Age Cohort</th>
+                <th>Gender</th>
+                <th>Prior Utilization Tier</th>
+                <th>Cohort Size</th>
+                <th>Readmission Rate</th>
+                <th>Action</th>
+              </tr>
+            </thead>
+            <tbody id="cohort-drill-body">
+              <!-- Rendered by JS -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB 5: HEALTH ECONOMICS & OPTIONAL EXTENSIONS -->
+    <section id="tab-extensions" class="tab-pane">
+      <div class="grid-2col" style="margin-bottom: 20px;">
+        <!-- Financial ROI Simulator -->
+        <div class="card-glass">
+          <h2 class="card-title">
+            <span>Clinical-Financial ROI Simulator</span>
+            <span style="font-size: 11px; color: #10b981;">CMS HRRP Economics</span>
+          </h2>
+          <div style="margin-bottom: 14px;">
+            <label style="font-size: 12px; color: #94a3b8; display: flex; justify-content: space-between;">
+              <span>Annual Hospital Discharge Volume:</span>
+              <b id="vol-display" style="color: #38bdf8;">10,000 Discharges</b>
+            </label>
+            <input type="range" id="slider-volume" min="1000" max="50000" step="1000" value="10000" style="width: 100%; margin-top: 6px;" />
+          </div>
+
+          <div style="margin-bottom: 16px;">
+            <label style="font-size: 12px; color: #94a3b8; display: flex; justify-content: space-between;">
+              <span>Discharge Intervention Cost per Patient:</span>
+              <b id="cost-display" style="color: #38bdf8;">$200 / Patient</b>
+            </label>
+            <input type="range" id="slider-intervention-cost" min="50" max="500" step="25" value="200" style="width: 100%; margin-top: 6px;" />
+          </div>
+
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+            <div style="background: rgba(30,41,59,0.5); padding: 12px; border-radius: 8px;">
+              <div style="font-size: 11px; color: #94a3b8;">Avoided Readmissions</div>
+              <div id="calc-averted-readmissions" style="font-size: 18px; font-weight: 700; color: #10b981; font-family: var(--font-mono);">--</div>
+            </div>
+            <div style="background: rgba(30,41,59,0.5); padding: 12px; border-radius: 8px;">
+              <div style="font-size: 11px; color: #94a3b8;">Program Investment</div>
+              <div id="calc-program-cost" style="font-size: 18px; font-weight: 700; color: #cbd5e1; font-family: var(--font-mono);">--</div>
+            </div>
+            <div style="background: rgba(30,41,59,0.5); padding: 12px; border-radius: 8px; grid-column: span 2; border: 1px solid rgba(16,185,129,0.3);">
+              <div style="display: flex; justify-content: space-between;">
+                <div>
+                  <div style="font-size: 11px; color: #94a3b8;">Net Hospital Savings (Direct + CMS Penalty)</div>
+                  <div id="calc-net-savings" style="font-size: 22px; font-weight: 800; color: #34d399; font-family: var(--font-mono);">--</div>
+                </div>
+                <div style="text-align: right;">
+                  <div style="font-size: 11px; color: #94a3b8;">Program ROI</div>
+                  <div id="calc-roi" style="font-size: 22px; font-weight: 800; color: #38bdf8; font-family: var(--font-mono);">--</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Survival Analysis & Drift -->
+        <div class="card-glass">
+          <h2 class="card-title">
+            <span>Survival & Drift Monitoring Audits</span>
+            <span style="font-size: 11px; color: #38bdf8;">Production Integrity</span>
+          </h2>
+          <div style="margin-bottom: 14px; background: rgba(30,41,59,0.4); padding: 12px; border-radius: 8px;">
+            <b style="font-size: 12px; color: #f8fafc;">Time-to-Readmission Survival Analysis (Kaplan-Meier):</b>
+            <p style="font-size: 11.5px; color: #94a3b8; margin-top: 4px;">
+              High-Risk cohort demonstrates a <b>3.2x relative hazard</b> of 30-day readmission compared to the low-risk baseline. 
+              The sharpest drop in event-free survival occurs within <b>days 3 to 10</b> post-discharge, validating the requirement for 48-hour transitional nurse outreach.
+            </p>
+          </div>
+          <div style="background: rgba(30,41,59,0.4); padding: 12px; border-radius: 8px;">
+            <b style="font-size: 12px; color: #f8fafc;">Temporal Population Stability Index (PSI):</b>
+            <p style="font-size: 11.5px; color: #94a3b8; margin-top: 4px;">
+              Model output prediction score PSI across chronological quarters = <b>0.0032</b> (< 0.10 threshold).
+              Key features (LOS, prior inpatient, medications) exhibit stable underlying distributions with no covariate shift requiring emergency retraining.
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Algorithmic Demographic Fairness Audit -->
+      <div class="card-glass">
+        <h2 class="card-title">
+          <span>Algorithmic Demographic Fairness & Parity Audit</span>
+          <span style="font-size: 11px; color: #10b981;">EEOC 80% Rule Audited</span>
+        </h2>
+        <div class="data-table-wrapper" style="margin-bottom: 12px;">
+          <table class="clinical-table">
+            <thead>
+              <tr>
+                <th>Demographic Subgroup</th>
+                <th>Sample Size</th>
+                <th>Selection Rate</th>
+                <th>TPR (Sensitivity / Recall)</th>
+                <th>False Positive Rate</th>
+                <th>Disparate Impact Ratio</th>
+              </tr>
+            </thead>
+            <tbody id="fairness-audit-body">
+              <!-- Rendered by JS -->
+            </tbody>
+          </table>
+        </div>
+        <p id="fairness-findings-text" style="font-size: 11.5px; color: #cbd5e1; line-height: 1.45;">
+          --
+        </p>
+      </div>
+    </section>
+
+    <!-- TAB 6: PDF REPORTS & SLIDES DOWNLOADS -->
+    <section id="tab-downloads" class="tab-pane">
+      <div class="grid-2col">
+        <div class="card-glass" style="text-align: center; padding: 36px 24px;">
+          <div style="font-size: 40px; margin-bottom: 12px;">📊</div>
+          <h2 style="font-size: 18px; font-weight: 700; color: #f8fafc;">Clinical Quality Dashboard Report</h2>
+          <p style="font-size: 12.5px; color: #94a3b8; margin: 10px 0 20px;">
+            Formal exported PDF audit containing executive KPI summaries, department readmission benchmarks,
+            diagnosis stay distributions, high-risk cohort drill-downs, and clinical protocol adherence summaries.
+          </p>
+          <a href="/reports/meditrack_clinical_dashboard.pdf" target="_blank" class="btn-send" style="display: inline-block; padding: 10px 24px; text-decoration: none;">
+            Download Dashboard PDF
+          </a>
+        </div>
+
+        <div class="card-glass" style="text-align: center; padding: 36px 24px;">
+          <div style="font-size: 40px; margin-bottom: 12px;">📑</div>
+          <h2 style="font-size: 18px; font-weight: 700; color: #f8fafc;">Ten-Slide Presentation Deck</h2>
+          <p style="font-size: 12.5px; color: #94a3b8; margin: 10px 0 20px;">
+            Comprehensive presentation deck covering clinical problem statement, dataset architecture, statistical hypothesis tests,
+            machine learning benchmarks, threshold justification, NLP & RAG assistant, and clinical limitations.
+          </p>
+          <a href="/slides/meditrack_presentation_slides.pdf" target="_blank" class="btn-send" style="display: inline-block; padding: 10px 24px; text-decoration: none;">
+            Download Presentation Slides PDF
+          </a>
+        </div>
+      </div>
+    </section>
+
+    <!-- Footer -->
+    <footer class="app-footer">
+      <div>
+        <b>MediTrack Clinical Decision Support System (Project CP-02)</b> • Batch 2, Room 205, Block 3, Sharda University
+      </div>
+      <div>
+        Publicly released de-identified healthcare data only • HIPAA Safe Harbor Compliant
+      </div>
+    </footer>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

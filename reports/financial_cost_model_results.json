@@ -1,0 +1,20 @@
+{
+  "extension_name": "Clinical-Financial ROI & Healthcare Economics Simulator",
+  "standard_cohort_size": 10000,
+  "operational_decision_threshold": 0.18,
+  "cost_parameters": {
+    "readmission_cost_penalty_per_case": 15200,
+    "discharge_intervention_bundle_cost": 200,
+    "intervention_relative_risk_reduction": "30%"
+  },
+  "simulated_outcomes_per_10k_patients": {
+    "total_discharges_flagged_for_intervention": 9972,
+    "true_readmissions_flagged_tp": 1114,
+    "preventable_readmissions_averted": 334,
+    "total_intervention_program_cost": "$1,994,400",
+    "gross_readmission_costs_averted": "$5,082,120",
+    "net_hospital_savings": "$3,087,720",
+    "program_return_on_investment_roi": "154.8%"
+  },
+  "clinical_bed_day_savings": "1438 inpatient bed-days preserved per 10k discharges"
+}
