@@ -8,6 +8,7 @@ let currentProfile = null;
 let currentPrediction = null;
 
 document.addEventListener('DOMContentLoaded', () => {
+  initThemeToggle();
   initTabs();
   initQuickButtons();
   initSearch();
@@ -20,6 +21,28 @@ document.addEventListener('DOMContentLoaded', () => {
   loadTriageWorklist();
   loadExtensionsData();
 });
+
+function initThemeToggle() {
+  const toggle = document.getElementById('theme-toggle');
+  const label = document.getElementById('theme-toggle-label');
+  const icon = document.querySelector('.theme-toggle-icon');
+  if (!toggle || !label || !icon) return;
+
+  const setTheme = (theme) => {
+    const isLight = theme === 'light';
+    document.body.classList.toggle('light-mode', isLight);
+    label.textContent = isLight ? 'Dark mode' : 'Light mode';
+    icon.textContent = isLight ? '☾' : '☼';
+    toggle.setAttribute('aria-label', isLight ? 'Switch to dark mode' : 'Switch to light mode');
+    localStorage.setItem('meditrack-theme', isLight ? 'light' : 'dark');
+  };
+
+  const savedTheme = localStorage.getItem('meditrack-theme');
+  setTheme(savedTheme === 'light' ? 'light' : 'dark');
+  toggle.addEventListener('click', () => {
+    setTheme(document.body.classList.contains('light-mode') ? 'dark' : 'light');
+  });
+}
 
 // 1. Tab Navigation
 function initTabs() {
