@@ -359,16 +359,21 @@ def assistant_chat(req: AssistantChatRequest):
     patient_context = {
         'encounter_id': req.encounter_id,
         'age_group': profile['age_group'],
+        'gender': profile.get('gender', 'Unknown'),
         'diag_1_category': profile['diagnoses'][0]['clinical_category'] if profile['diagnoses'] else 'General Medical',
+        'active_medications': profile.get('active_medications', []),
         'time_in_hospital': profile['time_in_hospital'],
         'number_inpatient': profile['number_inpatient'],
+        'number_emergency': profile.get('number_emergency', 0),
         'on_insulin': int(any(m['medication_name'] == 'insulin' for m in profile['active_medications'])),
         'has_medication_change': int(any(m['has_dosage_change'] for m in profile['active_medications'])),
-        'predicted_risk_score': pred_res['predicted_risk_score']
+        'predicted_risk_score': pred_res['predicted_risk_score'],
+        'risk_tier': pred_res.get('risk_tier', 'Moderate Risk')
     }
     
     result = generate_discharge_planning_summary(patient_context, req.user_query)
     return result
+
 
 @app.get("/api/dashboard/metrics")
 def get_dashboard_metrics():

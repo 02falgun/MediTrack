@@ -202,8 +202,8 @@ def retrieve_relevant_guidelines(patient_profile: dict, query_text: str = "") ->
 def generate_discharge_planning_summary(patient_profile: dict, user_query: str = "") -> dict:
     """
     Core Assistant Generator:
-    Evaluates guardrails, retrieves applicable guidelines, generates a structured
-    discharge planning summary tailored to patient risk profile with MANDATORY citations.
+    Evaluates guardrails, retrieves applicable guidelines, and generates a dynamic,
+    query-aware discharge planning response tailored to the patient risk profile with MANDATORY citations.
     """
     # 1. Run safety guardrail gate
     guardrail_res = check_guardrails(user_query)
@@ -222,40 +222,170 @@ def generate_discharge_planning_summary(patient_profile: dict, user_query: str =
     # 3. Assemble patient context summary
     pt_id = patient_profile.get('encounter_id', 'Unknown')
     age = patient_profile.get('age_group', 'Unknown')
+    gender = patient_profile.get('gender', 'Unknown')
     diag = patient_profile.get('diag_1_category', 'General Medical')
     los = patient_profile.get('time_in_hospital', 1)
     risk_score = patient_profile.get('predicted_risk_score', 0.0)
-    risk_tier = "HIGH RISK" if risk_score >= 0.18 else ("MODERATE RISK" if risk_score >= 0.10 else "LOW RISK")
+    risk_tier = patient_profile.get('risk_tier') or ("HIGH RISK" if risk_score >= 0.18 else ("MODERATE RISK" if risk_score >= 0.10 else "LOW RISK"))
     prior_inp = patient_profile.get('number_inpatient', 0)
-    med_change = "Yes" if patient_profile.get('has_medication_change', 0) else "None"
+    prior_er = patient_profile.get('number_emergency', 0)
+    on_insulin = bool(patient_profile.get('on_insulin'))
+    has_med_change = bool(patient_profile.get('has_medication_change'))
+    active_meds = patient_profile.get('active_medications', [])
+    med_names = [m.get('medication_name', '') for m in active_meds if isinstance(m, dict)]
     
-    # 4. Generate structured clinical guidance sections
-    summary_text = (
-        f"### MediTrack Clinical Decision Support: Discharge Planning Summary\n"
+    q = (user_query or "").lower().strip()
+    
+    # Classify Query Intent
+    is_hypoglycemia = any(k in q for k in ['hypoglycemia', 'hypo', 'low sugar', 'rule of 15', 'glucagon'])
+    is_insulin_meds = any(k in q for k in ['insulin', 'medication', 'dose', 'pharmacotherapy', 'drugs', 'reconciliation', 'regimen'])
+    is_ahrq_red = any(k in q for k in ['ahrq', 'project red', 'red', 'teach-back', 'teach back', 'steps', 'bundle'])
+    is_followup_tcm = any(k in q for k in ['follow-up', 'follow up', 'appointment', 'visit', 'tcm', 'timing', 'transitional care'])
+    is_cardio = any(k in q for k in ['heart', 'cardiac', 'circulatory', 'heart failure', 'weight monitor', 'edema', 'fluid'])
+    is_renal = any(k in q for k in ['kidney', 'renal', 'ckd', 'nephropathy', 'egfr', 'creatinine', 'metformin safety'])
+    is_red_flags = any(k in q for k in ['red flag', 'warning', 'emergency', 'when to call', 'symptoms to watch'])
+    is_why_risk = any(k in q for k in ['why', 'risk factor', 'score', 'high risk', 'contributing', 'cause'])
+    is_greeting = any(q == g or q.startswith(g + ' ') for g in ['hi', 'hello', 'hey', 'help', 'what can you do', 'who are you'])
+    
+    header = (
+        f"### MediTrack Clinical Assistant Response\n"
         f"**Patient Encounter:** #{pt_id} | **Risk Stratification:** {risk_tier} (30d Score: {risk_score*100:.1f}%)\n"
-        f"**Admitting Diagnosis:** {diag} | **Length of Stay:** {los} days | **Prior Inpatient Admissions:** {prior_inp}\n\n"
-        f"--- \n"
-        f"#### 1. Targeted Discharge Transition Checklist\n"
+        f"**Admitting Diagnosis:** {diag} | **Hospital Stay:** {los} days | **Prior Inpatient Admissions:** {prior_inp}\n\n"
+        f"---\n"
     )
     
-    checklist_items = []
-    if patient_profile.get('on_insulin') or patient_profile.get('has_medication_change'):
-        checklist_items.append("• **Insulin & Glycemic Reconciliation**: Provide written dose schedule, verify glucometer supply, and review hypoglycemia Rule of 15.")
-    if prior_inp >= 1 or risk_score >= 0.18:
-        checklist_items.append("• **Transitional Care Management (TCM)**: Initiate direct interactive outreach within 48 business hours post-discharge.")
-        checklist_items.append("• **Accelerated Ambulatory Follow-up**: Schedule face-to-face physician appointment within 7 days.")
-    checklist_items.append("• **Teach-Back Comprehension**: Utilize teach-back method to verify patient comprehension of medication schedules and red-flag symptoms.")
-    checklist_items.append("• **24/7 Red-Flag Action Plan**: Provide written phone number and specific warning triggers before seeking Emergency Room care.")
+    body = ""
     
-    summary_text += "\n".join(checklist_items) + "\n\n"
-    
-    summary_text += "#### 2. Protocol Grounding & Clinical Citations\n"
+    # 1. Hypoglycemia & Rule of 15
+    if is_hypoglycemia:
+        body += (
+            f"#### ⚠️ Hypoglycemia Risk & Emergency Management Protocol (ADA 2024)\n"
+            f"Patient #{pt_id} is stratified as **{risk_tier}** with "
+            f"{'active insulin pharmacotherapy' if on_insulin else 'inpatient diabetic management'}. "
+            f"Post-discharge glycemic instability and medication changes substantially heighten severe hypoglycemia risk.\n\n"
+            f"**Actionable Clinical Instructions:**\n"
+            f"• **The 'Rule of 15' Education**: Instruct patient and family caregiver to consume **15 grams of rapid-acting carbohydrates** "
+            f"(e.g., 4 oz fruit juice, half-can non-diet soda, or 3-4 glucose tablets) upon blood glucose < 70 mg/dL. Re-check capillary glucose in 15 minutes; repeat if still < 70 mg/dL.\n"
+            f"• **Emergency Glucagon Access**: If on basal/bolus insulin or high-potency sulfonylureas, prescribe ready-to-use nasal or auto-injector glucagon before discharge.\n"
+            f"• **Caregiver Training**: Ensure at least one family member or household contact demonstrates glucagon preparation and recognizes neuroglycopenic symptoms (confusion, diaphoresis, tremors).\n"
+            f"• **Follow-up Interval**: Outpatient glycemic evaluation required within 7 to 14 days of discharge.\n\n"
+        )
+    # 2. Insulin & Medication Management
+    elif is_insulin_meds:
+        med_summary_str = f"Active tracked medications: {', '.join(med_names)}" if med_names else "Active diabetes pharmacotherapy active"
+        body += (
+            f"#### 💉 Insulin Transition & Medication Reconciliation Protocol\n"
+            f"**Encounter Profile:** {med_summary_str} | "
+            f"**Inpatient Dose Changes:** {'Identified during stay (Elevated readmission hazard)' if has_med_change else 'Stable regimen'}.\n\n"
+            f"**Mandatory Discharge Actions (ADA 2024 / AHRQ):**\n"
+            f"• **Written Dosing Schedule**: Provide a printed, large-font schedule distinguishing basal (long-acting) from prandial (mealtime) insulin units.\n"
+            f"• **Pen & Needle Disposal Safety**: Verify patient has prescribed pen needles, lancets, and an approved sharps container before discharge.\n"
+            f"• **Medication Reconciliation**: Explicitly reconcile outpatient home drugs against inpatient discharge orders to prevent duplicate therapy.\n"
+            f"• **Pharmacy Verification**: Confirm outpatient pharmacy has filled discharge insulin and anti-hyperglycemic agents prior to physical departure.\n\n"
+        )
+    # 3. AHRQ Project RED 12-Step Bundle
+    elif is_ahrq_red:
+        body += (
+            f"#### 🏥 AHRQ Project RED (Re-Engineered Discharge) Protocol Checklist\n"
+            f"Project RED is clinically proven to reduce 30-day hospital readmissions and ED visits by 30%. "
+            f"For Patient #{pt_id}, the following 5 core bundle steps must be completed:\n\n"
+            f"1. **After-Hospital Care Plan (AHOP)**: Generate a personalized care plan booklet formatted at a 5th-to-6th grade reading level.\n"
+            f"2. **Teach-Back Comprehension Verification**: Confirm patient/caregiver can explain their medications and self-care in their own words rather than asking 'do you understand?'.\n"
+            f"3. **Pending Lab Results Review**: Document all pending culture or pathology results with assigned responsibility for outpatient review.\n"
+            f"4. **Explicit 24/7 Red-Flag Action Plan**: Provide direct contact numbers for the clinic nurse coordinator to call before going to the Emergency Department.\n"
+            f"5. **Post-Discharge Outreach Call**: Mandatory telephone follow-up by the transition nurse or pharmacist within **48 to 72 hours** post-discharge.\n\n"
+        )
+    # 4. Follow-up Timing & CMS TCM
+    elif is_followup_tcm:
+        body += (
+            f"#### 📅 Follow-up Timing & CMS Transitional Care Management (TCM)\n"
+            f"Based on Encounter #{pt_id}'s risk score of **{risk_score*100:.1f}%** and **{prior_inp} prior inpatient admissions**, "
+            f"the patient qualifies for high-intensity transitional care:\n\n"
+            f"• **48-Hour Interactive Outreach**: CMS TCM protocol mandates direct telephone or video contact by clinical staff within **2 business days** of discharge.\n"
+            f"• **7-Day Face-to-Face Visit**: High medical decision complexity requires an in-person physician appointment within **7 calendar days**.\n"
+            f"• **Community Coordination**: Transmission of the inpatient discharge summary to the outpatient primary care practitioner within 48 hours.\n"
+            f"• **Transportation & Refill Check**: Care coordinator must screen for social barriers (lack of transportation, prescription copays) during the 48h call.\n\n"
+        )
+    # 5. Heart Failure & Cardiovascular
+    elif is_cardio:
+        body += (
+            f"#### 🫀 ACC/AHA Cardiovascular & Heart Failure Discharge Protocol\n"
+            f"**Clinical Status:** Admitting diagnosis categorized under **{diag}** with inpatient stay of {los} days.\n\n"
+            f"**Evidence-Based Protocols (ACC/AHA Class I Guidance):**\n"
+            f"• **Daily Morning Weight Monitoring**: Instruct patient to weigh themselves each morning immediately after voiding. Report weight gain of **> 2-3 lbs in 24 hours** or **> 5 lbs in 1 week**.\n"
+            f"• **Electrolyte & Renal Laboratory Panel**: Schedule outpatient serum potassium, BUN, and creatinine lab draw within **7 to 10 days** post-discharge if adjusting diuretics or RAAS inhibitors.\n"
+            f"• **Guideline-Directed Medical Therapy (GDMT)**: Confirm optimization of beta-blockers, SGLT2 inhibitors, and ACEi/ARB/ARNI prior to discharge.\n"
+            f"• **Early Ambulatory Clinic Visit**: Confirmed clinic visit scheduled within 7 calendar days.\n\n"
+        )
+    # 6. Kidney Disease & Nephropathy
+    elif is_renal:
+        body += (
+            f"#### 🩺 KDIGO Diabetes & Chronic Kidney Disease (CKD) Guidance\n"
+            f"Patient #{pt_id} presenting with {diag} and metabolic considerations requires careful renal pharmacotherapy surveillance:\n\n"
+            f"• **Metformin Dosing & eGFR Thresholds**: Contraindicated if eGFR < 30 mL/min/1.73m². Dose must be halved to max 1,000 mg/day if eGFR is between 30 and 44 mL/min/1.73m².\n"
+            f"• **Nephrotoxic Avoidance**: Specifically counsel patient to avoid over-the-counter NSAIDs (ibuprofen, naproxen) which precipitate acute kidney injury in diabetic patients.\n"
+            f"• **Blood Pressure Target**: Maintain standardized office blood pressure target < 120 mmHg systolic when tolerated.\n"
+            f"• **Follow-up Protocol**: Repeat BMP (basic metabolic panel) within 14 days of discharge.\n\n"
+        )
+    # 7. Red Flags & Warning Signs
+    elif is_red_flags:
+        body += (
+            f"#### 🚩 Red-Flag Symptoms & 24/7 Action Triggers\n"
+            f"Provide the patient and family caregiver with a laminated magnet or AHOP page with the following immediate warning triggers:\n\n"
+            f"• **Severe Hypoglycemia**: Blood sugar < 70 mg/dL that fails to rise after two 'Rule of 15' treatments.\n"
+            f"• **Severe Hyperglycemia**: Blood sugar persistently > 300 mg/dL or presence of ketones with nausea/vomiting.\n"
+            f"• **Fluid Overload**: Sudden shortness of breath when lying flat, new ankle swelling, or > 3 lbs gain overnight.\n"
+            f"• **Infection Signs**: Fever > 100.4°F (38°C), non-healing diabetic foot ulcers, or burning with urination.\n"
+            f"• **First Contact Protocol**: Call the clinic nurse coordination line (or hospital triage line) **before** heading to the Emergency Department.\n\n"
+        )
+    # 8. Why is this patient high risk
+    elif is_why_risk:
+        body += (
+            f"#### 🔍 Clinical Factor Breakdown for Encounter #{pt_id}\n"
+            f"The calibrated predictive model assigns a **{risk_score*100:.1f}% 30-day readmission risk** ({risk_tier}). "
+            f"Key risk drivers derived from this encounter include:\n\n"
+            f"• **Prior Hospitalization Volume**: {prior_inp} prior inpatient admissions and {prior_er} emergency visits in preceding 12 months (Strongest historical recurrence predictor).\n"
+            f"• **Inpatient Length of Stay**: {los} days hospitalized, reflecting clinical complexity and acute decompensation.\n"
+            f"• **Pharmacotherapy Dynamics**: {'Active insulin with dosage alterations during hospitalization' if has_med_change else 'Active diabetes regimen without acute dosage shift'}.\n"
+            f"• **Primary Diagnostic Category**: {diag}, which historically exhibits elevated multi-system post-discharge vulnerability.\n\n"
+        )
+    # 9. Greeting / General Help
+    elif is_greeting:
+        body += (
+            f"#### 👋 Welcome to MediTrack Decision Support Assistant\n"
+            f"I am actively monitoring **Patient #{pt_id}** ({risk_tier}, 30d Risk: {risk_score*100:.1f}%).\n\n"
+            f"**You can consult me on evidence-based transition protocols such as:**\n"
+            f"• *'Review insulin transition protocol and hypoglycemia guidance (ADA)'*\n"
+            f"• *'What are the required AHRQ Project RED discharge steps?'*\n"
+            f"• *'When should this patient have follow-up under CMS TCM?'*\n"
+            f"• *'What are the red-flag warning signs for this patient?'*\n"
+            f"• *'Review heart failure and daily weight monitoring protocols'*\n"
+            f"• *'What factors make this patient high risk?'*\n\n"
+        )
+    # 10. General Comprehensive Discharge Plan (Default for general prompts)
+    else:
+        checklist_items = []
+        if on_insulin or has_med_change:
+            checklist_items.append("• **Insulin & Glycemic Reconciliation**: Provide written dose schedule, verify glucometer supply, and review hypoglycemia Rule of 15.")
+        if prior_inp >= 1 or risk_score >= 0.18:
+            checklist_items.append("• **Transitional Care Management (TCM)**: Initiate direct interactive outreach within 48 business hours post-discharge.")
+            checklist_items.append("• **Accelerated Ambulatory Follow-up**: Schedule face-to-face physician appointment within 7 days.")
+        checklist_items.append("• **Teach-Back Comprehension**: Utilize teach-back method to verify patient comprehension of medication schedules and red-flag symptoms.")
+        checklist_items.append("• **24/7 Red-Flag Action Plan**: Provide written phone number and specific warning triggers before seeking Emergency Room care.")
+        
+        body += (
+            f"#### 📋 Comprehensive Discharge Transition Checklist\n"
+            f"{chr(10).join(checklist_items)}\n\n"
+        )
+        
+    # Protocol Grounding & Citations section
+    body += "#### 📚 Protocol Grounding & Clinical Citations\n"
     citations_data = []
     for g in relevant_guidelines:
-        summary_text += f"**{g['title']}**\n"
-        summary_text += f"- *Authority*: {g['authority']} ({g['evidence_level']})\n"
-        summary_text += f"- *Mandatory Source Citation*: `{g['source_citation']}`\n"
-        summary_text += f"- *Applicable Recommendation*: {g['key_recommendations'][0]}\n\n"
+        body += f"**{g['title']}**\n"
+        body += f"- *Authority*: {g['authority']} ({g['evidence_level']})\n"
+        body += f"- *Mandatory Citation*: `{g['source_citation']}`\n"
+        body += f"- *Guideline Recommendation*: {g['key_recommendations'][0]}\n\n"
         citations_data.append({
             "id": g['id'],
             "title": g['title'],
@@ -264,7 +394,7 @@ def generate_discharge_planning_summary(patient_profile: dict, user_query: str =
             "evidence_level": g['evidence_level']
         })
         
-    summary_text += (
+    body += (
         "> **Clinical Notice**: This recommendation is grounded in published national transition guidelines "
         "and is supplied to augment clinical workflow. Final medical decisions, discharge timing, and pharmacotherapy "
         "remain under the sole jurisdiction of the licensed attending medical staff."
@@ -274,9 +404,10 @@ def generate_discharge_planning_summary(patient_profile: dict, user_query: str =
         "status": "SUCCESS",
         "guardrail_triggered": False,
         "violation_type": None,
-        "content": summary_text,
+        "content": header + body,
         "citations": citations_data
     }
+
 
 if __name__ == '__main__':
     # Test valid query
