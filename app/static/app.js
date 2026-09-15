@@ -1,6 +1,6 @@
 /**
- * MediTrack - Clinical Decision Support Client Application Logic
- * Integrates risk scoring, SHAP factors, guardrailed RAG assistant, triage, and dashboard.
+ * MediTrack - Enterprise Clinical Decision Support Client Application
+ * Standardized across NHS Digital Design System & IBM Carbon Healthcare guidelines
  */
 
 let currentEncounterId = 149190;
@@ -8,7 +8,6 @@ let currentProfile = null;
 let currentPrediction = null;
 
 document.addEventListener('DOMContentLoaded', () => {
-  initThemeToggle();
   initTabs();
   initQuickButtons();
   initSearch();
@@ -22,31 +21,9 @@ document.addEventListener('DOMContentLoaded', () => {
   loadExtensionsData();
 });
 
-function initThemeToggle() {
-  const toggle = document.getElementById('theme-toggle');
-  const label = document.getElementById('theme-toggle-label');
-  const icon = document.querySelector('.theme-toggle-icon');
-  if (!toggle || !label || !icon) return;
-
-  const setTheme = (theme) => {
-    const isLight = theme === 'light';
-    document.body.classList.toggle('light-mode', isLight);
-    label.textContent = isLight ? 'Dark mode' : 'Light mode';
-    icon.textContent = isLight ? '☾' : '☼';
-    toggle.setAttribute('aria-label', isLight ? 'Switch to dark mode' : 'Switch to light mode');
-    localStorage.setItem('meditrack-theme', isLight ? 'light' : 'dark');
-  };
-
-  const savedTheme = localStorage.getItem('meditrack-theme');
-  setTheme(savedTheme === 'light' ? 'light' : 'dark');
-  toggle.addEventListener('click', () => {
-    setTheme(document.body.classList.contains('light-mode') ? 'dark' : 'light');
-  });
-}
-
 // 1. Tab Navigation
 function initTabs() {
-  const tabs = document.querySelectorAll('.nav-tab-btn');
+  const tabs = document.querySelectorAll('.nav-item-btn');
   tabs.forEach(tab => {
     tab.addEventListener('click', () => {
       tabs.forEach(t => t.classList.remove('active'));
@@ -62,7 +39,7 @@ function initTabs() {
 
 // 2. Patient Search & Quick Pickers
 function initQuickButtons() {
-  const btns = document.querySelectorAll('.quick-btn');
+  const btns = document.querySelectorAll('.quick-patient-btn');
   btns.forEach(btn => {
     btn.addEventListener('click', () => {
       btns.forEach(b => b.classList.remove('active'));
@@ -81,19 +58,17 @@ function initSearch() {
     if (e.key === 'Enter') {
       const val = searchInput.value.trim();
       if (val) {
-        // If numeric, load directly
         const num = parseInt(val);
         if (!isNaN(num)) {
           loadPatientEncounter(num);
         } else {
-          // Query API for match
           fetch(`/api/patients?search=${encodeURIComponent(val)}&limit=1`)
             .then(r => r.json())
             .then(data => {
               if (data.encounters && data.encounters.length > 0) {
                 loadPatientEncounter(data.encounters[0].encounter_id);
               } else {
-                alert(`No encounter found matching "${val}"`);
+                alert(`No patient encounter found matching "${val}"`);
               }
             });
         }
@@ -107,7 +82,6 @@ async function loadPatientEncounter(encounterId) {
   try {
     currentEncounterId = encounterId;
 
-    // Fetch profile, prediction, and explanations concurrently
     const [profileRes, predRes, explainRes] = await Promise.all([
       fetch(`/api/patient/${encounterId}`),
       fetch(`/api/predict/${encounterId}`),
@@ -156,12 +130,9 @@ function renderPatientDetails(p) {
   diagContainer.innerHTML = '';
   if (p.diagnoses && p.diagnoses.length > 0) {
     p.diagnoses.forEach(d => {
-      const tag = document.createElement('div');
-      tag.className = 'factor-item';
-      tag.innerHTML = `
-        <span class="factor-name">Seq #${d.diagnosis_seq}: <b>${d.clinical_category}</b></span>
-        <span style="color: #94a3b8; font-size: 11px;">${d.clinical_description || d.icd9_code}</span>
-      `;
+      const tag = document.createElement('span');
+      tag.className = 'clinical-pill-tag';
+      tag.innerHTML = `Seq #${d.diagnosis_seq}: <strong>${d.clinical_category}</strong> (${d.icd9_code})`;
       diagContainer.appendChild(tag);
     });
   }
@@ -173,15 +144,12 @@ function renderPatientDetails(p) {
     p.active_medications.forEach(m => {
       const tag = document.createElement('span');
       const isShift = m.has_dosage_change;
-      tag.className = `prompt-chip ${isShift ? 'red-team' : ''}`;
-      tag.style.marginRight = '6px';
-      tag.style.marginBottom = '6px';
-      tag.style.display = 'inline-block';
-      tag.textContent = `${m.medication_name}: ${m.dosage_status} ${isShift ? '⚡ (Titrated)' : ''}`;
+      tag.className = `clinical-pill-tag ${isShift ? 'badge-high-risk' : ''}`;
+      tag.innerHTML = `${m.medication_name}: <strong>${m.dosage_status}</strong> ${isShift ? '(Titrated)' : ''}`;
       medsContainer.appendChild(tag);
     });
   } else {
-    medsContainer.innerHTML = '<span style="color: #64748b; font-size: 12px;">No active diabetic medications recorded</span>';
+    medsContainer.innerHTML = '<span style="color: var(--color-text-muted); font-size: 12px;">No active diabetic medications recorded</span>';
   }
 }
 
@@ -189,39 +157,51 @@ function renderRiskScore(pred) {
   const pct = pred.risk_percentage;
   document.getElementById('risk-score-pct').textContent = `${pct.toFixed(1)}%`;
 
-  // Update gauge circle SVG stroke-dashoffset
-  // Circumference = 2 * PI * r = 2 * 3.14159 * 48 = 301.6
+  // Update horizontal risk scale marker
+  const marker = document.getElementById('risk-scale-marker');
+  if (marker) {
+    let leftPos = 10;
+    if (pct <= 10) {
+      leftPos = (pct / 10) * 25;
+    } else if (pct <= 18) {
+      leftPos = 25 + ((pct - 10) / 8) * 20;
+    } else {
+      leftPos = 45 + ((Math.min(pct, 60) - 18) / 42) * 50;
+    }
+    marker.style.left = `${Math.min(Math.max(leftPos, 2), 98)}%`;
+  }
+
+  // Hidden SVG Circle backwards compatibility
   const circle = document.getElementById('gauge-progress-circle');
-  const circumference = 301.6;
-  const offset = circumference - (pct / 100) * circumference;
-  circle.style.strokeDashoffset = offset;
+  if (circle) {
+    const circumference = 301.6;
+    const offset = circumference - (pct / 100) * circumference;
+    circle.style.strokeDashoffset = offset;
+  }
 
   // Color according to risk tier
   const tierBadge = document.getElementById('risk-tier-badge');
-  tierBadge.className = 'risk-tier-badge';
+  tierBadge.className = 'status-badge';
 
   if (pred.risk_tier === 'High Risk') {
-    tierBadge.classList.add('badge-high');
-    tierBadge.textContent = 'HIGH RISK (30-Day Readmission Alert)';
-    circle.style.stroke = '#f43f5e';
+    tierBadge.classList.add('badge-high-risk');
+    tierBadge.textContent = 'HIGH RISK (CLINICAL ALERT)';
   } else if (pred.risk_tier === 'Moderate Risk') {
-    tierBadge.classList.add('badge-moderate');
-    tierBadge.textContent = 'MODERATE RISK (Elevated Vulnerability)';
-    circle.style.stroke = '#f59e0b';
+    tierBadge.classList.add('badge-moderate-risk');
+    tierBadge.textContent = 'MODERATE RISK';
   } else {
-    tierBadge.classList.add('badge-low');
-    tierBadge.textContent = 'LOW RISK (Standard Discharge Protocol)';
-    circle.style.stroke = '#10b981';
+    tierBadge.classList.add('badge-low-risk');
+    tierBadge.textContent = 'LOW RISK';
   }
 
   // Threshold Comparison Box
   document.getElementById('thresh-tuned-status').innerHTML = pred.flagged_for_intervention_clinical
-    ? '<span style="color: #fb7185; font-weight: 700;">🚨 FLAGGED FOR INTERVENTION</span>'
-    : '<span style="color: #34d399; font-weight: 600;">STANDARD DISCHARGE</span>';
+    ? '<span class="status-badge badge-high-risk">Flagged for Intervention</span>'
+    : '<span class="status-badge badge-low-risk">Standard Discharge</span>';
 
   document.getElementById('thresh-default-status').innerHTML = pred.flagged_default_0_5
-    ? '<span style="color: #fb7185; font-weight: 700;">FLAGGED</span>'
-    : '<span style="color: #94a3b8;">NOT FLAGGED (Missed by 0.50 Cutoff)</span>';
+    ? '<span class="status-badge badge-high-risk">Flagged</span>'
+    : '<span class="status-badge badge-neutral">Not Flagged (Missed by 0.50 Cutoff)</span>';
 
   document.getElementById('threshold-justification-text').textContent = pred.threshold_justification;
 }
@@ -232,7 +212,7 @@ function renderShapFactors(explainData) {
 
   const factors = explainData.top_contributing_factors || [];
   if (factors.length === 0) {
-    container.innerHTML = '<p style="color: #64748b; font-size: 12px;">No significant feature attributions detected.</p>';
+    container.innerHTML = '<p style="color: var(--color-text-muted); font-size: 12px;">No significant feature attributions detected.</p>';
     return;
   }
 
@@ -244,19 +224,17 @@ function renderShapFactors(explainData) {
     const widthPct = Math.min((Math.abs(f.impact_pct) / maxImp) * 100, 100);
 
     const row = document.createElement('div');
-    row.className = 'factor-item';
+    row.className = 'shap-factor-row';
     row.innerHTML = `
-      <div class="factor-name">
-        <span style="color: ${isPos ? '#fb7185' : '#34d399'}; font-size: 14px;">${isPos ? '▲' : '▼'}</span>
+      <div class="shap-feat-name">
+        <span style="color: ${isPos ? 'var(--color-danger)' : 'var(--color-success)'}; font-size: 11px;">${isPos ? '▲' : '▼'}</span>
         <span>${formatFeatureName(f.feature)}</span>
       </div>
-      <div class="factor-bar-wrapper">
-        <div class="factor-bar-track">
-          <div class="${isPos ? 'factor-bar-fill-pos' : 'factor-bar-fill-neg'}" style="width: ${widthPct}%;"></div>
-        </div>
-        <div class="factor-impact-val" style="color: ${isPos ? '#fb7185' : '#34d399'};">
-          ${isPos ? '+' : ''}${f.impact_pct.toFixed(1)}%
-        </div>
+      <div class="shap-bar-track-wrap">
+        <div class="${isPos ? 'shap-bar-pos' : 'shap-bar-neg'}" style="width: ${widthPct}%;"></div>
+      </div>
+      <div class="shap-val-text" style="color: ${isPos ? 'var(--color-danger)' : 'var(--color-success)'};">
+        ${isPos ? '+' : ''}${f.impact_pct.toFixed(1)}%
       </div>
     `;
     container.appendChild(row);
@@ -295,7 +273,7 @@ function initChat() {
   });
 
   // Prompt chips
-  const chips = document.querySelectorAll('.prompt-chip[data-prompt]');
+  const chips = document.querySelectorAll('.prompt-chip-btn[data-prompt]');
   chips.forEach(chip => {
     chip.addEventListener('click', () => {
       const p = chip.getAttribute('data-prompt');
@@ -331,47 +309,48 @@ async function handleChatSubmit() {
       appendChatBubble('assistant', data.content, data.citations);
     }
   } catch (err) {
-    appendChatBubble('refusal', 'Error connecting to clinical assistant service.');
+    appendChatBubble('refusal', 'Error connecting to clinical guidance service.');
   }
 }
 
 function appendChatBubble(type, text, citations = []) {
   const history = document.getElementById('chat-history');
-  const bubble = document.createElement('div');
-  bubble.className = `chat-bubble ${type}`;
+  const row = document.createElement('div');
+  row.className = `chat-message-row ${type}`;
 
   // Format simple markdown
   let formatted = text
-    .replace(/### (.*?)\n/g, '<h3 style="font-size: 14px; font-weight: 700; margin-bottom: 6px; color: #38bdf8;">$1</h3>')
-    .replace(/#### (.*?)\n/g, '<h4 style="font-size: 13px; font-weight: 600; margin-top: 10px; margin-bottom: 4px; color: #f8fafc;">$1</h4>')
-    .replace(/\*\*(.*?)\*\*/g, '<b>$1</b>')
-    .replace(/\*(.*?)\*/g, '<i>$1</i>')
+    .replace(/### (.*?)\n/g, '<div style="font-size: 14.5px; font-weight: 700; margin-bottom: 6px; color: var(--color-primary);">$1</div>')
+    .replace(/#### (.*?)\n/g, '<div style="font-size: 13.5px; font-weight: 600; margin-top: 10px; margin-bottom: 4px; color: var(--color-text-primary);">$1</div>')
+    .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+    .replace(/\*(.*?)\*/g, '<em>$1</em>')
     .replace(/• (.*?)\n/g, '<div style="margin-left: 8px; margin-bottom: 4px;">• $1</div>')
     .replace(/\n\n/g, '<br/>');
 
-  bubble.innerHTML = formatted;
+  const bubbleBox = document.createElement('div');
+  bubbleBox.className = 'message-bubble-box';
+  bubbleBox.innerHTML = formatted;
 
   // Render citations if present
   if (citations && citations.length > 0) {
     const citBox = document.createElement('div');
-    citBox.style.marginTop = '12px';
-    citBox.style.paddingTop = '8px';
-    citBox.style.borderTop = '1px solid rgba(148, 163, 184, 0.15)';
-    citBox.innerHTML = '<div style="font-size: 11px; font-weight: 700; color: #06b6d4; text-transform: uppercase; margin-bottom: 6px;">Mandatory Source Citations:</div>';
+    citBox.className = 'guideline-citations-block';
+    citBox.innerHTML = '<div class="citation-header-title">Mandatory Source Citations:</div>';
 
     citations.forEach(c => {
       const cCard = document.createElement('div');
-      cCard.className = 'citation-card';
+      cCard.className = 'citation-item-card';
       cCard.innerHTML = `
-        <div class="auth">${c.authority} — <i>${c.evidence_level}</i></div>
-        <div style="font-size: 10.5px; color: #94a3b8; margin-top: 2px;">${c.citation}</div>
+        <div class="auth">${c.authority} — <em>${c.evidence_level}</em></div>
+        <div class="citation-source-text">${c.citation}</div>
       `;
       citBox.appendChild(cCard);
     });
-    bubble.appendChild(citBox);
+    bubbleBox.appendChild(citBox);
   }
 
-  history.appendChild(bubble);
+  row.appendChild(bubbleBox);
+  history.appendChild(row);
   history.scrollTop = history.scrollHeight;
 }
 
@@ -392,22 +371,28 @@ async function loadDashboardAnalytics() {
 function renderDepartmentChart(depts) {
   const container = document.getElementById('dept-chart-container');
   if (!container) return;
-  container.innerHTML = '';
+  
+  // Preserve the benchmark line
+  const benchmarkHtml = `
+    <div class="benchmark-line" style="bottom: 76px;">
+      <span>Benchmark: 11.4%</span>
+    </div>
+  `;
+  container.innerHTML = benchmarkHtml;
 
   const maxRate = Math.max(...depts.map(d => d.readm_rate_pct), 15.0);
 
   depts.forEach(d => {
-    const barItem = document.createElement('div');
-    barItem.className = 'chart-bar-item';
-    const heightPct = (d.readm_rate_pct / maxRate) * 100;
+    const col = document.createElement('div');
+    col.className = 'dept-bar-column';
+    const heightPct = (d.readm_rate_pct / maxRate) * 160;
 
-    barItem.innerHTML = `
-      <div class="chart-bar-rect" style="height: ${heightPct}%;">
-        <div class="chart-bar-val">${d.readm_rate_pct}%</div>
-      </div>
-      <div class="chart-bar-lbl" title="${d.department}">${d.department}</div>
+    col.innerHTML = `
+      <div class="dept-bar-value">${d.readm_rate_pct}%</div>
+      <div class="dept-bar-fill" style="height: ${heightPct}px;" title="${d.department}: ${d.readm_rate_pct}%"></div>
+      <div class="dept-bar-label" title="${d.department}">${d.department}</div>
     `;
-    container.appendChild(barItem);
+    container.appendChild(col);
   });
 }
 
@@ -419,10 +404,10 @@ function renderDiagnosisTable(diagnoses) {
   diagnoses.forEach(d => {
     const tr = document.createElement('tr');
     tr.innerHTML = `
-      <td><b>${d.diagnosis_group}</b></td>
+      <td><strong>${d.diagnosis_group}</strong></td>
       <td>${d.encounters.toLocaleString()}</td>
       <td>${d.avg_stay_days} days</td>
-      <td><span style="color: ${d.readm_rate_pct >= 12 ? '#fb7185' : '#38bdf8'}; font-weight: 600;">${d.readm_rate_pct}%</span></td>
+      <td><span style="color: ${d.readm_rate_pct >= 12 ? 'var(--color-danger)' : 'var(--color-primary)'}; font-weight: 600;">${d.readm_rate_pct}%</span></td>
     `;
     tbody.appendChild(tr);
   });
@@ -436,13 +421,13 @@ function renderCohortDrilldown(cohorts) {
   cohorts.forEach(c => {
     const tr = document.createElement('tr');
     tr.innerHTML = `
-      <td><b>${c.age_group}</b></td>
+      <td><strong>${c.age_group}</strong></td>
       <td>${c.gender}</td>
-      <td><span class="badge-status-select" style="background: rgba(244, 63, 94, 0.15); color: #fb7185;">${c.prior_utilization}</span></td>
+      <td><span class="status-badge badge-neutral">${c.prior_utilization}</span></td>
       <td>${c.cohort_count.toLocaleString()}</td>
-      <td><b style="color: #fb7185;">${c.readm_rate_pct}%</b></td>
+      <td><strong style="color: var(--color-danger);">${c.readm_rate_pct}%</strong></td>
       <td>
-        <button class="quick-btn" onclick="drillIntoCohort('${c.age_group}', '${c.gender}')">Inspect Cohort</button>
+        <button class="btn-secondary btn-sm" onclick="drillIntoCohort('${c.age_group}', '${c.gender}')">Inspect Cohort</button>
       </td>
     `;
     tbody.appendChild(tr);
@@ -451,8 +436,7 @@ function renderCohortDrilldown(cohorts) {
 
 function drillIntoCohort(age, gender) {
   alert(`Drill-through active: Filtering high-risk triage queue for ${age} ${gender} patients.`);
-  // Switch to triage worklist tab
-  document.querySelector('.nav-tab-btn[data-tab="tab-triage"]').click();
+  document.querySelector('.nav-item-btn[data-tab="tab-triage"]').click();
 }
 
 // 6. Care Team High-Risk Triage Worklist
@@ -467,14 +451,14 @@ async function loadTriageWorklist() {
     data.worklist.forEach(item => {
       const tr = document.createElement('tr');
       tr.innerHTML = `
-        <td><b>#${item.encounter_id}</b></td>
+        <td><strong>#${item.encounter_id}</strong></td>
         <td>${item.age_group} (${item.gender[0]})</td>
         <td>${item.primary_diagnosis}</td>
-        <td><span style="color: #fb7185; font-weight: 700;">${item.number_inpatient} visits</span></td>
+        <td><span style="color: var(--color-danger); font-weight: 600;">${item.number_inpatient} visits</span></td>
         <td>${item.time_in_hospital} days</td>
-        <td><span class="badge-high">${(item.estimated_risk_score * 100).toFixed(1)}%</span></td>
+        <td><span class="status-badge badge-high-risk">${(item.estimated_risk_score * 100).toFixed(1)}%</span></td>
         <td>
-          <select class="badge-status-select" onchange="updateTriageStatus(${item.encounter_id}, this.value)">
+          <select style="padding: 4px 8px; border-radius: var(--radius-sm); border: 1px solid var(--color-border); font-size: 12px; background: #FFFFFF;" onchange="updateTriageStatus(${item.encounter_id}, this.value)">
             <option value="Pending Action" ${item.triage_status === 'Pending Action' ? 'selected' : ''}>Pending Action</option>
             <option value="Contacted (48h)" ${item.triage_status === 'Contacted (48h)' ? 'selected' : ''}>Contacted (48h)</option>
             <option value="Care Plan Prepared" ${item.triage_status === 'Care Plan Prepared' ? 'selected' : ''}>Care Plan Prepared</option>
@@ -482,7 +466,7 @@ async function loadTriageWorklist() {
           </select>
         </td>
         <td>
-          <button class="quick-btn" onclick="loadPatientEncounter(${item.encounter_id}); document.querySelector('.nav-tab-btn[data-tab=\\'tab-inspector\\']').click();">Inspect</button>
+          <button class="btn-secondary btn-sm" onclick="loadPatientEncounter(${item.encounter_id}); document.querySelector('.nav-item-btn[data-tab=\\'tab-inspector\\']').click();">Inspect</button>
         </td>
       `;
       tbody.appendChild(tr);
@@ -559,12 +543,12 @@ async function loadExtensionsData() {
         for (const [grp, m] of Object.entries(raceAudit)) {
           const tr = document.createElement('tr');
           tr.innerHTML = `
-            <td><b>${grp}</b></td>
+            <td><strong>${grp}</strong></td>
             <td>${m.sample_size.toLocaleString()}</td>
             <td>${(m.selection_rate * 100).toFixed(1)}%</td>
-            <td><b style="color: #10b981;">${(m.tpr_sensitivity * 100).toFixed(1)}%</b></td>
+            <td><strong style="color: var(--color-success);">${(m.tpr_sensitivity * 100).toFixed(1)}%</strong></td>
             <td>${(m.fpr * 100).toFixed(1)}%</td>
-            <td><span class="badge-status-select">${m.disparate_impact_ratio}</span></td>
+            <td><span class="status-badge badge-neutral">${m.disparate_impact_ratio}</span></td>
           `;
           fBody.appendChild(tr);
         }
