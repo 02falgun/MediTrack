@@ -424,6 +424,31 @@
             </div>
           </div>
 
+          <div class="clinical-card patient-directory-card">
+            <div class="card-header-clean">
+              <div>
+                <span class="card-title-text">Patient Risk Directory</span>
+                <p class="card-subtitle-text">Browse encounters grouped by predicted readmission risk.</p>
+              </div>
+              <div class="directory-controls">
+                <label class="sr-only" for="directory-search-input">Search patient directory</label>
+                <input id="directory-search-input" class="directory-search-input" type="search" placeholder="Search encounter, patient, or diagnosis" />
+                <button id="directory-refresh-btn" class="btn-secondary btn-sm" type="button">Refresh</button>
+              </div>
+            </div>
+            <div id="directory-summary" class="directory-summary-grid"></div>
+            <div class="directory-filter-bar" role="group" aria-label="Filter patients by risk category">
+              <button class="directory-filter-btn active" type="button" data-directory-filter="All">All patients</button>
+              <button class="directory-filter-btn" type="button" data-directory-filter="Low Risk">Low risk</button>
+              <button class="directory-filter-btn" type="button" data-directory-filter="Moderate Risk">Moderate risk</button>
+              <button class="directory-filter-btn" type="button" data-directory-filter="Clinical Alert">Clinical alert</button>
+              <button class="directory-filter-btn" type="button" data-directory-filter="High Risk">High risk</button>
+            </div>
+            <div id="patient-directory-groups" class="patient-directory-groups">
+              <p class="directory-empty-state">Loading patient risk groups...</p>
+            </div>
+          </div>
+
           <div class="grid-2col">
             <!-- Specialty Benchmarking Bar Chart -->
             <div class="clinical-card">

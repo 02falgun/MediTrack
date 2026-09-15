@@ -17,6 +17,7 @@ document.addEventListener('DOMContentLoaded', () => {
   // Load initial patient encounter #149190
   loadPatientEncounter(currentEncounterId);
   loadDashboardAnalytics();
+  initPatientDirectory();
   loadTriageWorklist();
   loadExtensionsData();
 });
@@ -366,6 +367,99 @@ async function loadDashboardAnalytics() {
   } catch (err) {
     console.error("Error loading dashboard metrics:", err);
   }
+}
+
+let patientDirectoryRows = [];
+let patientDirectoryFilter = 'All';
+
+function initPatientDirectory() {
+  const searchInput = document.getElementById('directory-search-input');
+  const refreshButton = document.getElementById('directory-refresh-btn');
+  if (!searchInput || !refreshButton) return;
+
+  searchInput.addEventListener('input', () => renderPatientDirectory(searchInput.value));
+  refreshButton.addEventListener('click', loadPatientDirectory);
+  document.querySelectorAll('.directory-filter-btn').forEach(button => {
+    button.addEventListener('click', () => {
+      patientDirectoryFilter = button.dataset.directoryFilter;
+      document.querySelectorAll('.directory-filter-btn').forEach(item => item.classList.remove('active'));
+      button.classList.add('active');
+      renderPatientDirectory(searchInput.value);
+    });
+  });
+  loadPatientDirectory();
+}
+
+async function loadPatientDirectory() {
+  const groups = document.getElementById('patient-directory-groups');
+  if (!groups) return;
+  groups.innerHTML = '<p class="directory-empty-state">Loading patient risk groups...</p>';
+
+  try {
+    const res = await fetch('/api/patients?limit=250');
+    if (!res.ok) throw new Error(`Directory request failed: ${res.status}`);
+    const data = await res.json();
+    patientDirectoryRows = data.encounters || [];
+    renderPatientDirectory(document.getElementById('directory-search-input')?.value || '');
+  } catch (err) {
+    console.error('Error loading patient directory:', err);
+    groups.innerHTML = '<p class="directory-empty-state">Unable to load patient risk groups.</p>';
+  }
+}
+
+function renderPatientDirectory(searchTerm = '') {
+  const groups = document.getElementById('patient-directory-groups');
+  const summary = document.getElementById('directory-summary');
+  if (!groups || !summary) return;
+
+  const term = searchTerm.trim().toLowerCase();
+  const rows = patientDirectoryRows.filter(patient => !term || [
+    patient.encounter_id, patient.patient_nbr, patient.primary_diagnosis
+  ].some(value => String(value || '').toLowerCase().includes(term)))
+    .filter(patient => patientDirectoryFilter === 'All' || patient.risk_tier === patientDirectoryFilter);
+  const categories = [
+    { key: 'Low Risk', label: 'Low', className: 'directory-low', description: '< 10%' },
+    { key: 'Moderate Risk', label: 'Moderate', className: 'directory-moderate', description: '10–18%' },
+    { key: 'Clinical Alert', label: 'Clinical', className: 'directory-clinical', description: '18–50%' },
+    { key: 'High Risk', label: 'High', className: 'directory-high', description: '≥ 50%' }
+  ];
+
+  summary.innerHTML = categories.map(category => {
+    const count = rows.filter(patient => patient.risk_tier === category.key).length;
+    return `<div class="directory-summary-tile ${category.className}">
+      <span class="directory-summary-label">${category.label}</span>
+      <strong>${count}</strong>
+      <span>${category.description} predicted risk</span>
+    </div>`;
+  }).join('');
+
+  groups.innerHTML = categories.map(category => {
+    const categoryRows = rows.filter(patient => patient.risk_tier === category.key).slice(0, 8);
+    const tableRows = categoryRows.length ? categoryRows.map(patient => `
+      <tr>
+        <td><strong>#${patient.encounter_id}</strong></td>
+        <td>${patient.age_group || 'Unknown'} · ${patient.gender || 'Unknown'}</td>
+        <td>${patient.primary_diagnosis || 'Unspecified'}</td>
+        <td><span class="status-badge ${riskBadgeClass(patient.risk_tier)}">${patient.risk_percentage.toFixed(1)}%</span></td>
+        <td><button class="btn-secondary btn-sm" type="button" onclick="inspectDirectoryPatient(${patient.encounter_id})">Inspect</button></td>
+      </tr>`).join('') : '<tr><td colspan="5" class="directory-empty-cell">No matching encounters</td></tr>';
+
+    return `<section class="directory-group ${category.className}">
+      <div class="directory-group-heading"><h3>${category.label} Risk</h3><span>${categoryRows.length} shown</span></div>
+      <div class="clinical-table-wrapper"><table class="clinical-table"><thead><tr><th>Encounter</th><th>Demographics</th><th>Primary Diagnosis</th><th>Risk</th><th></th></tr></thead><tbody>${tableRows}</tbody></table></div>
+    </section>`;
+  }).join('');
+}
+
+function riskBadgeClass(tier) {
+  if (tier === 'High Risk' || tier === 'Clinical Alert') return 'badge-high-risk';
+  if (tier === 'Moderate Risk') return 'badge-moderate-risk';
+  return 'badge-low-risk';
+}
+
+function inspectDirectoryPatient(encounterId) {
+  loadPatientEncounter(encounterId);
+  document.querySelector('.nav-item-btn[data-tab="tab-inspector"]').click();
 }
 
 function renderDepartmentChart(depts) {

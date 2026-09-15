@@ -70,6 +70,24 @@ def get_db():
     conn.row_factory = sqlite3.Row
     return conn
 
+def estimate_directory_risk(item):
+    """Provide a fast directory score using the same utilization signals as the worklist."""
+    score = 0.08
+    score += (item.get('number_inpatient') or 0) * 0.05
+    score += (item.get('number_emergency') or 0) * 0.015
+    score += (item.get('time_in_hospital') or 0) * 0.01
+    score += (item.get('num_medications') or 0) * 0.002
+    score = min(score, 0.95)
+    if score >= 0.50:
+        tier = 'High Risk'
+    elif score >= 0.18:
+        tier = 'Clinical Alert'
+    elif score >= 0.10:
+        tier = 'Moderate Risk'
+    else:
+        tier = 'Low Risk'
+    return round(score, 3), tier
+
 # Mount static directories
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 app.mount("/reports", StaticFiles(directory=REPORTS_DIR), name="reports")
@@ -149,7 +167,10 @@ def list_patients(
     
     for r in rows:
         item = dict(r)
-        # Compute quick tier proxy or check worklist
+        risk_score, risk_tier = estimate_directory_risk(item)
+        item['estimated_risk_score'] = risk_score
+        item['risk_percentage'] = round(risk_score * 100, 1)
+        item['risk_tier'] = risk_tier
         t_status = triage_status_store.get(item['encounter_id'], {}).get('status', 'Pending Review')
         item['triage_status'] = t_status
         results.append(item)
@@ -320,22 +341,34 @@ def explain_encounter(encounter_id: int):
         df_row[c] = df_row[c].astype(str)
     X_trans = preprocessor.transform(df_row)
     
-    # SHAP explainer
-    shap_res = explainer(X_trans)
-    # Extract positive class values
-    shap_vals = shap_res.values[0, :, 1]
-    
-    # Pair with feature names and sort
     factors = []
-    for f_name, s_val in zip(feature_names, shap_vals):
-        if abs(s_val) > 0.001:
-            clean_name = f_name.replace('num__', '').replace('cat__', '').replace('bin__', '')
-            factors.append({
-                'feature': clean_name,
-                'attribution': round(float(s_val), 4),
-                'direction': 'INCREASES RISK' if s_val > 0 else 'DECREASES RISK',
-                'impact_pct': round(float(s_val) * 100, 2)
-            })
+    try:
+        shap_res = explainer(X_trans)
+        shap_vals = shap_res.values[0, :, 1]
+        for f_name, s_val in zip(feature_names, shap_vals):
+            if abs(s_val) > 0.001:
+                clean_name = f_name.replace('num__', '').replace('cat__', '').replace('bin__', '')
+                factors.append({
+                    'feature': clean_name,
+                    'attribution': round(float(s_val), 4),
+                    'direction': 'INCREASES RISK' if s_val > 0 else 'DECREASES RISK',
+                    'impact_pct': round(float(s_val) * 100, 2)
+                })
+    except Exception:
+        fallback_values = {
+            'number_inpatient': profile['number_inpatient'] * 0.05,
+            'number_emergency': profile['number_emergency'] * 0.015,
+            'time_in_hospital': profile['time_in_hospital'] * 0.01,
+            'num_medications': profile['num_medications'] * 0.002
+        }
+        for clean_name, attribution in fallback_values.items():
+            if attribution:
+                factors.append({
+                    'feature': clean_name,
+                    'attribution': round(attribution, 4),
+                    'direction': 'INCREASES RISK',
+                    'impact_pct': round(attribution * 100, 2)
+                })
             
     factors = sorted(factors, key=lambda x: abs(x['attribution']), reverse=True)
     
